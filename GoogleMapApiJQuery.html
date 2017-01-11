@@ -1,0 +1,564 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Map Api and jQuery Demo by Busy WWW</title>
+	<meta charset="utf-8" />
+
+    <script src="gauge.js" type="text/javascript"></script>
+    <script src="jquery-1.12.4.min.js"></script>
+    <script src="bootstrap.min.js"></script>
+    <script src="angular.min.js"></script>
+    <script src="bootstrap-slider.min.js"></script>
+    <link href="bootstrap-slider.min.css" rel="stylesheet" />
+    <link href="bootstrap.min.css" rel="stylesheet" />
+
+    <script type="text/javascript"
+            src="https://maps.googleapis.com/maps/api/js?key=AIzaSyANaXn_yd54qLfdJLWi7o94IVlQWzgydDM&sensor=true">
+    </script>
+    <style type="text/css">
+        body {
+            margin: 40px;
+        }
+        #slider1 .slider-selection {
+            background: #BABABA;
+        }
+    </style>
+    <script type="text/javascript">
+
+        Date.prototype.format = function (format) {
+            var o = {
+                "M+": this.getMonth() + 1, //month
+                "d+": this.getDate(),    //day
+                "h+": this.getHours(),   //hour
+                "m+": this.getMinutes(), //minute
+                "s+": this.getSeconds(), //second
+                "q+": Math.floor((this.getMonth() + 3) / 3),  //quarter
+                "S": this.getMilliseconds() //millisecond
+            }
+
+            if (/(y+)/.test(format)) format = format.replace(RegExp.$1,
+              (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+            for (var k in o) if (new RegExp("(" + k + ")").test(format))
+                format = format.replace(RegExp.$1,
+                  RegExp.$1.length == 1 ? o[k] :
+                    ("00" + o[k]).substr(("" + o[k]).length));
+            return format;
+        }
+
+        var map;
+        var mapOptions;
+        var marker;
+        var time;
+        var timetonext;
+        var latlng;
+        var speed;
+        var rpm;
+        var temperature;
+
+        var gpscontents;
+        var gpsentries = [];
+        var gps;
+        var gpsNext;
+        var currentId;
+        var gpsMinTime;
+        var gpsMaxTime;
+        var gpsTimeDuration;
+
+        var playSpeed = 2;
+        var speedMode = "MPH";
+        var playStatus = 1;
+
+        var _timeout;
+
+        var txtTime;
+        var txtLat;
+        var txtLng;
+        var txtSpeed;
+        var txtRpm;
+        var txtTemperature;
+        var sliderPosition;
+        var btnPlay;
+        var mySliderVal;
+        var speedText, speedText2;
+        var _playMessage = "0/0";
+
+
+        function initialize() {
+            latlng = new google.maps.LatLng(34.062243273900336, -118.31399589055603);
+
+            mapOptions = {
+                center: latlng,
+                zoom: 14,
+                mapTypeId: google.maps.MapTypeId.ROADMAP
+            };
+            map = new google.maps.Map(document.getElementById("map-canvas"), mapOptions);
+            marker = new google.maps.Marker();
+            marker.setMap(map);
+            //moveMarker();
+        }
+
+        function moveMarker() {
+            marker.setPosition(latlng);
+            map.panTo(latlng);
+        }
+
+        function moveMarker(gps) {
+            if (gps == null || gps["lat"] == null || gps["lng"] == null) {
+                return;
+            }
+            latlng = new google.maps.LatLng(gps["lat"], gps["lng"]);
+            marker.setPosition(latlng);
+            map.panTo(latlng);
+        }
+
+        google.maps.event.addDomListener(window, 'load', initialize);
+
+        function loadGpsEntires() {
+            playStatus = 0;
+            btnPlay.button().html("PLAY");
+
+            Gauge.Collection.get('gaugeR').clear();
+            Gauge.Collection.get('gaugeT').clear();
+            Gauge.Collection.get('gaugeS').clear();
+            gpsentries = [];
+            var data = gpscontents.split("\n");
+            $.each(data, function (index, value) {
+                if (index > 0 && index < data.length) {
+                    var d = value.split(",");
+                    var ditem = {
+                        id: d[0]
+                        , time: d[1]
+                        , gtime: d[2]
+                        , lat: d[3]
+                        , lng: d[4]
+                        , speed: d[5]
+                        , accuracy: d[6]
+                        , altitude: d[7]
+                        , bearing: d[8]
+                        , rpm: (d.length >= 11 ? d[10] : 0)
+                        , temperature: (rpm == 0 ? 0 : (d.length >= 12 ? d[11] : 0))
+                    };
+                    gpsentries.push(ditem);
+                }
+            });
+            if (gpsentries.length > 0) {
+
+                btnPlay.removeAttr("disabled");
+                gps = gpsentries[0];
+
+                sliderPosition.slider('setAttribute', 'max', gpsentries.length - 2);
+                sliderPosition.slider('setValue', 1)
+                sliderPosition.slider('refresh');
+
+                gpsMinTime = parseFloat(gps["time"]);
+                gpsMaxTime = parseFloat(gpsentries[gpsentries.length - 2]["time"]);
+                gpsTimeDuration = gpsMaxTime - gpsMinTime;
+
+                setTimeout(function () { setGpsEntry(gps); }, 1000);
+            }
+        }
+
+        function runGpsEntries() {
+            var i = parseInt(gps["id"], 0);
+            gps = gpsentries[i];
+
+            setGpsEntry(gps);
+        }
+
+        function setGpsEntry(gps) {
+            currentId = gps["id"];
+            moveMarker(gps);
+            setGuageValues(gps);
+
+            _playMessage.text(currentId + "/" + (gpsentries.length - 1));
+
+            var i = parseInt(gps["id"], 0);
+            if (i == gpsentries.length - 1) {
+                gpsNext = null;
+            } else {
+                gpsNext = gpsentries[i + 1];
+                if (gpsNext == null || gpsNext == undefined) return;
+                var timediff = gpsNext["time"] - gps["time"];
+                var nextPlay = parseInt(timediff, 0) / playSpeed;
+                if (playStatus == 0) return;
+                _timeout = setTimeout(function () { clearTimeout(_timeout); setGpsEntry(gpsNext); }, nextPlay);
+             }
+        }
+
+        function setGuageValues(gps) {
+            if (gps == null || gps["speed"] == null) {
+                return;
+            }
+            // speed
+            speed = gps["speed"];
+            if (speedMode == "KPH") {
+                // gps speed == kph
+            } else if (speedMode == "MPH") {
+                speed = (speed * 0.6222).toFixed(0)
+            } else if (speedMode == "KNOT") {
+                speed = (speed * 0.539).toFixed(0)
+            } else if (speedMode == "FPS") {
+                speed = (speed * 0.912).toFixed(0)
+            }
+
+            Gauge.Collection.get('gaugeR').setValue(gps["rpm"]);
+            Gauge.Collection.get('gaugeT').setValue((gps["rpm"] == 0 ? 0 : gps["temperature"]));
+            Gauge.Collection.get('gaugeS').setValue(speed);
+
+            speed = parseInt(speed);
+            setGpsTextValues(gps, speed);
+        }
+
+        function setGpsTextValues(gps, speed) {
+            if (gps == null || gps["time"] == null || gps["lat"] == null || gps["lng"] == null || gps["speed"] == null) {
+                return;
+            }
+            var dt = new Date(parseInt(gps["time"], 10));
+            txtTime.text(dt.format("MM-dd-yyyy h:mm:ss"));
+            txtLat.text(gps["lat"].substring(0, 10));
+            txtLng.text(gps["lng"].substring(0, 10));
+            txtRpm.text(gps["rpm"]);
+            txtTemperature.text((gps["rpm"] == 0 ? 0 : gps["temperature"]));
+            sliderPosition.slider("setValue", gps["id"]);
+            $("#slider1Value").text(gps["id"]);
+
+            // speed text
+            if (speed > 99) {
+                speedText.text(speed);
+            } else if (speed > 9) {
+                speedText.text("0" + speed);
+            } else {
+                speedText.text("00" + speed);
+            }
+            speedText2.text(speed);
+        }
+
+        function setPlaySpeed() {
+            playSpeed = $("input[name='rdPlaySpeed']:checked").val();
+            _video = document.getElementById("videoPlayer");        //.defaultPlaybackRate = 1.0;
+            if (_video.readyState === 4) {
+                _video.playbackRate = parseFloat(playSpeed);
+            }
+        }
+
+        function handleFileSelect() {
+            if (window.File && window.FileReader && window.FileList && window.Blob) {
+
+            } else {
+                alert('The File APIs are not fully supported in this browser.');
+                return;
+            }
+
+            input = document.getElementById('fileinput');
+            if (!input) {
+                alert("Um, couldn't find the fileinput element.");
+            }
+            else if (!input.files) {
+                alert("This browser doesn't seem to support the `files` property of file inputs.");
+            }
+            else if (!input.files[0]) {
+                alert("Please select a file before clicking 'Load'");
+            }
+            else {
+                file = input.files[0];
+                fr = new FileReader();
+                fr.onload = receivedText;
+                fr.readAsText(file);
+                //fr.readAsDataURL(file);
+            }
+        }
+
+        function receivedText() {
+            gpscontents = fr.result;
+
+            loadGpsEntires();
+        }
+
+        function loadSample1() {
+            $.get('samplevideo.gps.txt', function (data) {
+                gpscontents = data;
+                loadGpsEntires();
+            });
+        }
+
+        $(document).ready(function () {
+            txtTime = $("#gpsTime");
+            txtLat = $("#gpsLat");
+            txtLng = $("#gpsLng");
+            txtSpeed = $("#gpsSpeed");
+            txtRpm = $("#gpsRpm");
+            txtTemperature = $("#gpsTemperature");
+            btnPlay = $("#playButton");
+            btnClearVideo = $("#clearVideo");
+            speedText = $("#txtSpeed");
+            speedText2 = $("#txtSpeed2");
+            mySliderVal = $("#slider1Value");
+            sliderPosition = $("#slider1");
+            _playMessage = $("#playMessage");
+
+            $("#slider1").slider({
+                formatter: function (value) {
+                    tooltip: 'show';
+                    return value;
+                }
+            });
+
+            $("#slider1").on("slide", function (e) {
+                mySliderVal = e.value;
+                $("#slider1Value").text(e.value);
+
+                if (gpsentries.length > mySliderVal) {
+                    playStatus = 0;
+                    btnPlay.button().html("PLAY");
+                    gps = gpsentries[e.value];
+
+                    setGpsEntry(gps);
+                }
+            });
+
+            $("#btnSample1").button().click(function () {
+                loadSample1();
+            });
+            $("#btnSample2").button().click(function () {
+                $.get('sample1.gps.txt', function (data) {
+                    gpscontents = data;
+                    loadGpsEntires();
+                });
+            });
+            $("#btnSample3").button().click(function () {
+                $.get('sample2.gps.txt', function (data) {
+                    gpscontents = data;
+                    loadGpsEntires();
+                });
+            });
+
+            $("#btnLoad").button().click(function () {
+                handleFileSelect();
+            });
+
+            $("#checkboxGuages").change(function () {
+                //alert(this.checked);
+                if (this.checked) {
+                    $("#gaugePanel").show();
+                } else {
+                    $("#gaugePanel").hide();
+                }
+            });
+
+            $('input:text, input:file, input:password, input[type=email]').button().addClass('textField');
+
+            $("#optSpeed1x").attr("checked", true);
+            $("input[name='rdPlaySpeed']").click(function () {
+                $(this).attr("checked", true);
+                setPlaySpeed();
+            });
+
+            setPlaySpeed();
+
+            $("#selSpeedMode").bind("click change", (function () {
+                speedMode = $("#selSpeedMode").val();
+                // reset Speed Guage
+                Gauge.Collection.get('gaugeS').config["units"] = speedMode;
+                Gauge.Collection.get('gaugeS').updateConfig();
+            }));
+
+            btnPlay.button().click(function () {
+                _video = document.getElementById("videoPlayer");
+                if (playStatus == 1) {
+                    playStatus = 0;
+                    btnPlay.button().html("PLAY");
+                } else {
+                    playStatus = 1;
+                    btnPlay.button().html("PAUSE");
+                    gps = gpsentries[currentId];
+                    setGpsEntry(gps);
+                }
+            });
+
+            btnPlay.attr("disabled", "disabled");
+            playStatus = 0;
+            btnPlay.button().html("PLAY");
+
+            setTimeout(function () { loadSample1(); }, 5000);
+
+        });
+    </script>
+</head>
+<body>
+
+    <div class="container">
+
+        <div class="panel panel-danger" style="width: 670px">
+            <div class="panel-heading">
+                <h4>LOAD AND PLAY YOUR OWN GPS FILE</h4>
+            </div>
+            <div class="panel-body">
+                <p>
+                    Load and play Dashboard Cam GPS file from local computer.
+                    <br />File are located at the Dashboard Cam app record folders.
+                    <br />File extension is ".gps". (ex: Rec-2013-06-26-14-30.gps)
+                </p>
+                <div>
+                    <label class="btn btn-primary" for="fileinput">
+                        <input type="file" id="fileinput" style="display: none;" onchange="$('#upload-file-info').html($(this).val());" />
+                        STEP 1:&nbsp;&nbsp;Choose GPS Data File...
+                    </label>
+                    <span class='label label-success' id="upload-file-info" style="font-size: 12px; padding: 4px;"></span>
+                </div>
+                <div style="margin-top: 16px;">
+                    <button type="button" class="btn btn-success" id="btnLoad">STEP 2: Load GPS Data For Play</button>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="mapContents" class="panel panel-danger" style="width: 670px;">
+            <div class="panel-heading">
+                <h4>PLAY GPS DATA FILE</h4>
+            </div>
+            <div class="panel-body">
+                <div id="divSampleButtons" style=" margin-top: 20px; margin-left: 20px;">
+                    <input type="button" class="btn btn-sm btn-success" id="btnSample1" value="Load Sample1" style="margin-right: 20px;" />
+                    <input type="button" class="btn btn-sm btn-primary" id="btnSample2" value="Load Sample2" style="margin-right: 20px;" />
+                    <input type="button" class="btn btn-sm btn-danger" id="btnSample3" value="Load Sample3" style="margin-right: 20px;" />
+
+                    <div class="btn btn-sm btn-warning" style="margin-left: 20px;">
+                        <div class="checkbox-inline" style="vertical-align: middle;">
+                            <input type="checkbox" checked="checked" id="checkboxGuages" />&nbsp;Show Guages
+                        </div>
+                    </div>
+                </div>
+
+                <style type="text/css">
+                    .panel-body {
+                        position: relative;
+                    }
+
+                    .overlay {
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background-color: rgba(0, 0, 0, 0.0);
+                        z-index: 9999;
+                        color: white;
+                        display: inline-block;
+                    }
+                </style>
+
+                <div class="panel-body">
+                    <div id="map-canvas"
+                         style="width: 600px; height: 340px;
+                        margin-bottom: 0px; border: solid 2px #808080; z-index: 900;"></div>
+                    <div class="overlay" style="">
+                        <div id="divTime" style="position:absolute; top: 24px; left: 200px; padding: 4px; z-index: 2000; font-size: 12px; color: rgba(182, 255, 0, 1); background-color: rgba(0, 0, 0, 0.50); text-align: center; width: 240px;">&nbsp;<span id="gpsTime"></span></div>
+                        <div id="divLoc" style="position: absolute; bottom:24px; left: 200px; color: rgba(182, 255, 0, 1); background-color: rgba(0, 0, 0, 0.50); padding: 4px; width: 240px; height: auto; font-size:12px; z-index: 2000;">
+                            <div id="divLat" style="text-align: center;">
+                                Lat:&nbsp;<span id="gpsLat"></span>&nbsp;&nbsp;
+                                Lng:&nbsp;<span id="gpsLng"></span>
+                            </div>
+                        </div>
+                        <div id="txtSpeed2" style="clear: both; height: auto; position:absolute; bottom: 40px; left: 24px; z-index: 2001; font-size: 36px; color: rgba(182, 255, 0, 1); background-color: rgba(0, 0, 0, 0.50); text-align: center; vertical-align: middle; width: 80px; padding: 16px;">
+                            0
+                        </div>
+                        <div id="divGpsInfo" style="position: absolute; top:24px; right: 30px; color: rgba(182, 255, 0, 1); background-color: rgba(0, 0, 0, 0.50); padding: 8px; width: 90px; height: auto; font-size: 12px; z-index: 2000;">
+                            <div id="divRpm">RPM:&nbsp;<span id="gpsRpm"></span></div>
+                            <div id="divTemperature">Temp:&nbsp;<span id="gpsTemperature"></span></div>
+                        </div>
+
+                        <div id="divVideo" style="display: none; position: absolute; top:20px; left: 20px; background-color: rgba(0, 0, 0, 0.50); padding: 1px; width:180px; height: 130px; z-index: 1000;">
+                            <video id="videoPlayer" width="180" height="130" controls="controls" onerror="failed(event)"
+                                <p>Your browswer does not support the HTML5 Video element.</p>
+                            </video>
+                        </div>
+
+                        <div id="gaugePanel" style="position:absolute; bottom: 50px; left: 164px">
+                            <canvas id="gaugeT" width="100" height="100"
+                                    data-type="canv-gauge"
+                                    data-title="Temperature"
+                                    data-min-value="0"
+                                    data-max-value="200"
+                                    data-major-ticks="0 20 40 60 80 100 120 140 160 180 200"
+                                    data-minor-ticks="2"
+                                    data-stroke-ticks="true"
+                                    data-units="C"
+                                    data-value-format="3.0"
+                                    data-highlights="0 20 #eee, 20 60 #ccc, 60 100 #aaa, 100 160 #eaa, 160 200 #e66"
+                                    data-glow="true"></canvas>
+                            <canvas id="gaugeR" width="100" height="100"
+                                    data-type="canv-gauge"
+                                    data-title="RPM"
+                                    data-min-value="0"
+                                    data-max-value="20000"
+                                    data-major-ticks="0 2000 4000 6000 8000 10000 12000 14000 16000 18000 20000"
+                                    data-minor-ticks="2"
+                                    data-stroke-ticks="true"
+                                    data-units="Rev"
+                                    data-value-format="5.0"
+                                    data-colors-needle="#ad5 #ad5"
+                                    data-highlights="0 2000 #eee, 2000 6000 #ccc, 6000 10000 #aaa, 10000 16000 #eaa, 16000 20000 #e66"
+                                    data-glow="true"></canvas>
+                            <canvas id="gaugeS" width="100" height="100"
+                                    data-type="canv-gauge"
+                                    data-title="Speed"
+                                    data-min-value="0"
+                                    data-max-value="240"
+                                    data-major-ticks="0 20 40 60 80 100 120 140 160 180 200 220 240"
+                                    data-minor-ticks="2"
+                                    data-stroke-ticks="true"
+                                    data-units="MPH"
+                                    data-value-format="3.0"
+                                    data-glow="true"
+                                    data-animation-delay="10"
+                                    data-animation-duration="200"
+                                    data-animation-fn="bounce"
+                                    data-colors-needle="#69d #69d"
+                                    data-highlights="0 30 #eee, 30 60 #ccc, 60 100 #aaa, 100 160 #eaa, 160 240 #e66"></canvas>
+                            <!--data-colors-title="#000"-->
+                        </div>
+                    </div>
+
+                </div>
+
+                <div id="playerControls" style="">
+                    <div style="padding-left: 16px;">
+                        <span id="playButton" class="btn btn-primary" style="margin-top: -4px; padding: 2px; width: 60px;">PLAY</span>
+                        <span id="playMessage" style="padding: 16px; vertical-align: middle; font-size: 0.8em;">0/0</span>
+
+                        <input id="slider1" data-slider-id='slider1' type="text" style="width: 360px;"
+                               data-slider-min="1"
+                               data-slider-max="300"
+                               data-slider-step="1"
+                               data-slider-value="1" />
+
+                        <span id="slider1Value" class="btn btn-danger" style="margin: 16px;">0</span>
+                    </div>
+                </div>
+
+                <div class="panel" style="padding: 16px; color: black; font-size: 12px;">
+                    <span>PLAY SPEED:&nbsp;&nbsp;</span>
+                    <span class="radio-inline"><input id="optSpeed1x" name="rdPlaySpeed" type="radio" value="1" />1X</span>&nbsp;
+                    <span class="radio-inline"><input id="optSpeed2x" name="rdPlaySpeed" type="radio" value="2" />2X</span>&nbsp;
+                    <span class="radio-inline"><input id="optSpeed4x" name="rdPlaySpeed" type="radio" value="4" />4X</span>&nbsp;
+                    <span class="radio-inline"><input id="optSpeed10x" name="rdPlaySpeed" type="radio" value="10" />10X</span>&nbsp;
+                    <span class="radio-inline"><input id="optSpeed15x" name="rdPlaySpeed" type="radio" value="15" />15X</span>&nbsp;
+                    <span>&nbsp;&nbsp;</span>
+                    <span id="divSpeedMode">
+                        <select id="selSpeedMode">
+                            <option value="MPH">MPH (Mile per hour)</option>
+                            <option value="KPH">KPH (Killometer per hour)</option>
+                            <option value="KNOT">KNOT (Nautical mile per hour)</option>
+                            <option value="FPS">FPS (Foot per second)</option>
+                        </select>
+                    </span>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+
+</body>
+</html>
